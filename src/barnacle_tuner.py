@@ -175,7 +175,7 @@ def short_tag(p: SimpleNamespace) -> str:
     )
 
 
-def run_sweep(image_path: str, out_dir: Path, adjustment: float) -> list[RunResult]:
+def run_sweep(image_path: str, out_dir: Path, adjustment: float, max_count: int = 200) -> list[RunResult]:
     image = cv2.imread(image_path)
     if image is None:
         sys.exit(f"[ERROR] Cannot read image: {image_path}")
@@ -205,8 +205,14 @@ def run_sweep(image_path: str, out_dir: Path, adjustment: float) -> list[RunResu
         adjusted  = raw * p.adjustment
         elapsed   = (time.perf_counter() - t0) * 1000
 
-        tag      = short_tag(p)
-        stem     = Path(image_path).stem
+        tag  = short_tag(p)
+        stem = Path(image_path).stem
+        bar  = "█" * int(30 * i / total) + "░" * (30 - int(30 * i / total))
+
+        if raw >= max_count:
+            print(f"  [{bar}] {i:>4}/{total}  raw={raw:>4}  SKIPPED (>={max_count})  {tag}", end="\r")
+            continue
+
         filename = f"{stem}__{tag}.jpg"
         out_path = out_dir / filename
 
@@ -224,8 +230,7 @@ def run_sweep(image_path: str, out_dir: Path, adjustment: float) -> list[RunResu
         )
         results.append(r)
 
-        bar = "█" * int(30 * i / total) + "░" * (30 - int(30 * i / total))
-        print(f"  [{bar}] {i:>4}/{total}  raw={raw:>4}  {tag}", end="\r")
+        print(f"  [{bar}] {i:>4}/{total}  raw={raw:>4}  SAVED  {tag}", end="\r")
 
     print()  # newline after progress bar
     return results
@@ -284,9 +289,11 @@ def save_contact_sheet(results: list[RunResult], out_dir: Path, cols: int = 6):
     print(f"[✓] Contact sheet saved → {path}  ({rows_needed} rows × {cols} cols)")
 
 
-def print_summary(results: list[RunResult]):
+def print_summary(results: list[RunResult], total_ran: int, max_count: int):
+    skipped = total_ran - len(results)
+    print(f"\n── Run summary  ({len(results)} saved / {skipped} skipped ≥{max_count}) ────")
     counts = sorted(set(r.raw_count for r in results))
-    print("\n── Count distribution ─────────────────────────")
+    print("── Count distribution ─────────────────────────")
     for c in counts:
         n   = sum(1 for r in results if r.raw_count == c)
         bar = "▮" * n
@@ -312,6 +319,8 @@ def main():
                    help="Directory to write annotated images, CSV, and contact sheet")
     p.add_argument("--adjustment", type=float, default=1.0,
                    help="Adjustment constant applied to every run")
+    p.add_argument("--max_count",  type=int,   default=200,
+                   help="Only save runs where raw detections are below this threshold")
     p.add_argument("--cols",       type=int,   default=6,
                    help="Columns in the contact sheet")
     args = p.parse_args()
@@ -319,10 +328,10 @@ def main():
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    results = run_sweep(args.image, out_dir, args.adjustment)
+    results = run_sweep(args.image, out_dir, args.adjustment, args.max_count)
     save_csv(results, out_dir)
     save_contact_sheet(results, out_dir, cols=args.cols)
-    print_summary(results)
+    print_summary(results, total_ran=len(build_param_combos()), max_count=args.max_count)
 
 
 if __name__ == "__main__":
