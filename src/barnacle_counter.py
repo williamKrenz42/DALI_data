@@ -24,16 +24,16 @@ from pathlib import Path
 DEFAULTS = dict(
     # --- Hough circle params ---
     dp=1,           # Inverse ratio of accumulator resolution to image resolution
-    min_dist=25,      # Minimum distance between detected circle centres (px)
-    param1=50,        # Upper Canny threshold (lower = param1/2)
-    param2=35,        # Accumulator threshold – lower → more (false) circles
-    min_radius=6,     # Smallest barnacle radius to look for (px)
-    max_radius=40,    # Largest barnacle radius to look for (px)
+    min_dist=20,      # Minimum distance between detected circle centres (px)
+    param1=40,        # Upper Canny threshold (lower = param1/2)
+    param2=20,        # Accumulator threshold – lower → more (false) circles
+    min_radius=10,     # Smallest barnacle radius to look for (px)
+    max_radius=25,    # Largest barnacle radius to look for (px)
 
     # --- Ellipse fallback ---
     use_ellipse=True,        # Also run contour-based ellipse detection?
-    ellipse_min_area=200,     # Min contour area to consider (px²)
-    ellipse_max_area=15000,   # Max contour area to consider
+    ellipse_min_area=50,     # Min contour area to consider (px²)
+    ellipse_max_area=1000,   # Max contour area to consider
     ellipse_aspect_ratio=1.1, # Max width/height ratio to still call it an ellipse
 
     # --- Adjustment constant ---

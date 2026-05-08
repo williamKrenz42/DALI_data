@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 
 # ── File paths ────────────────────────────────────────────────────────────────
-INPUT_PATH  = "media/img1.png"   # change to your image path
+INPUT_PATH  = "media/img2.png"   # change to your image path
 OUTPUT_PATH = "media/output.jpg"        # change to your desired output path
 
 # ── HSV colour range for the green grid ───────────────────────────────────────
