@@ -30,6 +30,11 @@ DEFAULTS = dict(
     min_radius=10,     # Smallest barnacle radius to look for (px)
     max_radius=25,    # Largest barnacle radius to look for (px)
 
+    # --- Cluster filter ---
+    use_cluster_filter=False,    # Drop circles isolated from other circle detections?
+    cluster_radius=50,           # Neighbour search radius around each circle centre (px)
+    min_cluster_neighbors=1,     # Required neighbouring circle centres inside cluster_radius
+
     # --- Ellipse fallback ---
     use_ellipse=True,        # Also run contour-based ellipse detection?
     ellipse_min_area=50,     # Min contour area to consider (px²)
@@ -74,6 +79,55 @@ def detect_circles(gray: np.ndarray, args) -> list[tuple[int, int, int]]:
     if circles is None:
         return []
     return [(int(x), int(y), int(r)) for x, y, r in circles[0]]
+
+
+def filter_isolated_circles(
+    circles: list[tuple[int, int, int]],
+    radius: int,
+    min_neighbors: int,
+) -> list[tuple[int, int, int]]:
+    """
+    Keep only circles with enough nearby circle centres.
+
+    This uses a small spatial hash instead of comparing every circle to every
+    other circle, so it stays cheap even when Hough produces many candidates.
+    """
+    if len(circles) <= min_neighbors or radius <= 0 or min_neighbors <= 0:
+        return circles
+
+    cell_size = radius
+    radius_sq = radius * radius
+    grid: dict[tuple[int, int], list[int]] = {}
+
+    for i, (x, y, _) in enumerate(circles):
+        cell = (x // cell_size, y // cell_size)
+        grid.setdefault(cell, []).append(i)
+
+    kept = []
+    for i, (x, y, r) in enumerate(circles):
+        cell_x = x // cell_size
+        cell_y = y // cell_size
+        neighbors = 0
+
+        for gx in range(cell_x - 1, cell_x + 2):
+            for gy in range(cell_y - 1, cell_y + 2):
+                for j in grid.get((gx, gy), []):
+                    if i == j:
+                        continue
+                    nx, ny, _ = circles[j]
+                    dx = x - nx
+                    dy = y - ny
+                    if dx * dx + dy * dy <= radius_sq:
+                        neighbors += 1
+                        if neighbors >= min_neighbors:
+                            kept.append((x, y, r))
+                            break
+                if neighbors >= min_neighbors:
+                    break
+            if neighbors >= min_neighbors:
+                break
+
+    return kept
 
 
 def detect_ellipses(gray: np.ndarray, args) -> list[tuple]:
@@ -152,6 +206,13 @@ def count_barnacles(image_path: str, args) -> dict:
     circles  = detect_circles(gray, args)
     ellipses = detect_ellipses(gray, args) if args.use_ellipse else []
 
+    if args.use_cluster_filter:
+        circles = filter_isolated_circles(
+            circles,
+            radius=args.cluster_radius,
+            min_neighbors=args.min_cluster_neighbors,
+        )
+
     # Deduplicate: if a circle centre falls inside an already-found ellipse, skip it
     # (simple centroid-distance guard to avoid double-counting)
     if ellipses:
@@ -207,6 +268,14 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Accumulator threshold – lower = more detections")
     p.add_argument("--min_radius",  type=int,   default=DEFAULTS["min_radius"])
     p.add_argument("--max_radius",  type=int,   default=DEFAULTS["max_radius"])
+
+    # Cluster filter
+    p.add_argument("--use_cluster_filter", action="store_true", default=DEFAULTS["use_cluster_filter"],
+                   help="Drop circles that do not have enough neighbouring circle detections")
+    p.add_argument("--cluster_radius", type=int, default=DEFAULTS["cluster_radius"],
+                   help="Neighbour search radius for --use_cluster_filter (px)")
+    p.add_argument("--min_cluster_neighbors", type=int, default=DEFAULTS["min_cluster_neighbors"],
+                   help="Required neighbours inside --cluster_radius")
 
     # Ellipse fallback
     p.add_argument("--use_ellipse", action="store_true", default=DEFAULTS["use_ellipse"],
