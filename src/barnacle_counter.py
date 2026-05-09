@@ -14,8 +14,17 @@ Requirements:
 import cv2
 import numpy as np
 import argparse
+import base64
 import sys
-from pathlib import Path
+import threading
+import tkinter as tk
+from tkinter import filedialog, messagebox
+from types import SimpleNamespace
+
+try:
+    from crop import crop_image
+except ModuleNotFoundError:
+    from src.crop import crop_image
 
 
 # ──────────────────────────────────────────────
@@ -196,11 +205,8 @@ def draw_detections(
     return out
 
 
-def count_barnacles(image_path: str, args) -> dict:
-    image = cv2.imread(image_path)
-    if image is None:
-        sys.exit(f"[ERROR] Could not read image: {image_path}")
-
+def count_barnacles_in_image(image: np.ndarray, args, image_path: str = "") -> dict:
+    """Run detection on an already-loaded/cropped image and return counts + overlay."""
     gray = preprocess(image, debug=args.debug)
 
     circles  = detect_circles(gray, args)
@@ -229,6 +235,26 @@ def count_barnacles(image_path: str, args) -> dict:
 
     annotated = draw_detections(image, circles, ellipses, raw_count, adjusted_count, args.adjustment)
 
+    result = {
+        "image":          image_path,
+        "circles_found":  len(circles),
+        "ellipses_found": len(ellipses),
+        "raw_count":      raw_count,
+        "adjustment":     args.adjustment,
+        "adjusted_count": adjusted_count,
+        "annotated":      annotated,
+    }
+    return result
+
+
+def count_barnacles(image_path: str, args) -> dict:
+    image = cv2.imread(image_path)
+    if image is None:
+        sys.exit(f"[ERROR] Could not read image: {image_path}")
+
+    result = count_barnacles_in_image(image, args, image_path=image_path)
+    annotated = result["annotated"]
+
     if args.output:
         cv2.imwrite(args.output, annotated)
         print(f"[✓] Annotated image saved → {args.output}")
@@ -237,15 +263,104 @@ def count_barnacles(image_path: str, args) -> dict:
         cv2.waitKey(0)
         cv2.destroyAllWindows()
 
-    result = {
-        "image":          image_path,
-        "circles_found":  len(circles),
-        "ellipses_found": len(ellipses),
-        "raw_count":      raw_count,
-        "adjustment":     args.adjustment,
-        "adjusted_count": adjusted_count,
-    }
     return result
+
+
+def default_args() -> SimpleNamespace:
+    """Build an argparse-like namespace from DEFAULTS for GUI runs."""
+    return SimpleNamespace(**DEFAULTS)
+
+
+def cv_to_photo_image(image: np.ndarray, max_width: int = 1000, max_height: int = 700) -> tk.PhotoImage:
+    """Convert an OpenCV BGR image into a Tk PhotoImage, resized to fit."""
+    h, w = image.shape[:2]
+    scale = min(max_width / w, max_height / h, 1.0)
+    if scale < 1.0:
+        image = cv2.resize(image, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+
+    rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    ok, encoded = cv2.imencode(".png", rgb)
+    if not ok:
+        raise ValueError("Could not encode annotated image for display.")
+    png_data = base64.b64encode(encoded.tobytes())
+    return tk.PhotoImage(data=png_data)
+
+
+class BarnacleCounterApp:
+    def __init__(self, root: tk.Tk):
+        self.root = root
+        self.root.title("Barnacle Counter")
+        self.root.geometry("1100x820")
+        self.root.minsize(760, 560)
+        self.photo = None
+
+        self.status_var = tk.StringVar(value="Choose an image to crop and count.")
+        self.count_var = tk.StringVar(value="Estimated count: --")
+
+        top = tk.Frame(root, padx=14, pady=12)
+        top.pack(fill=tk.X)
+
+        self.upload_button = tk.Button(top, text="Upload Image", command=self.choose_image)
+        self.upload_button.pack(side=tk.LEFT)
+
+        tk.Label(top, textvariable=self.count_var, font=("Helvetica", 16, "bold")).pack(side=tk.LEFT, padx=18)
+
+        self.status_label = tk.Label(root, textvariable=self.status_var, anchor="w", padx=14)
+        self.status_label.pack(fill=tk.X)
+
+        self.image_label = tk.Label(root, bg="#202020")
+        self.image_label.pack(fill=tk.BOTH, expand=True, padx=14, pady=14)
+
+    def choose_image(self):
+        path = filedialog.askopenfilename(
+            title="Choose barnacle image",
+            filetypes=[
+                ("Image files", "*.png *.jpg *.jpeg *.tif *.tiff *.bmp"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not path:
+            return
+
+        self.upload_button.config(state=tk.DISABLED)
+        self.count_var.set("Estimated count: --")
+        self.status_var.set("Cropping grid and counting barnacles...")
+        threading.Thread(target=self.process_image, args=(path,), daemon=True).start()
+
+    def process_image(self, path: str):
+        try:
+            roi = crop_image(path, "media/output.jpg")
+            args = default_args()
+            result = count_barnacles_in_image(roi, args, image_path=path)
+            cv2.imwrite("media/final.jpg", result["annotated"])
+        except Exception as exc:
+            self.root.after(0, self.show_error, exc)
+            return
+
+        self.root.after(0, self.show_result, result)
+
+    def show_result(self, result: dict):
+        self.upload_button.config(state=tk.NORMAL)
+        self.count_var.set(f"Estimated count: {result['adjusted_count']:.1f}")
+        self.status_var.set(
+            f"Circles: {result['circles_found']}   "
+            f"Ellipses: {result['ellipses_found']}   "
+            "Saved crop to media/output.jpg and overlay to media/final.jpg"
+        )
+
+        self.photo = cv_to_photo_image(result["annotated"])
+        self.image_label.config(image=self.photo)
+
+    def show_error(self, exc: Exception):
+        self.upload_button.config(state=tk.NORMAL)
+        self.status_var.set("Processing failed.")
+        messagebox.showerror("Barnacle Counter", str(exc))
+
+
+def launch_gui():
+    root = tk.Tk()
+    BarnacleCounterApp(root)
+    root.mainloop()
 
 
 # ──────────────────────────────────────────────
@@ -256,7 +371,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Count barnacles in a cropped image using circle / ellipse detection.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--image",       required=True,  help="Path to the cropped barnacle image")
+    p.add_argument("--image",       help="Path to a pre-cropped barnacle image. Omit to launch the GUI.")
 
     # Hough params
     p.add_argument("--dp",          type=float, default=DEFAULTS["dp"])
@@ -298,6 +413,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 if __name__ == "__main__":
     args = build_parser().parse_args()
+
+    if not args.image:
+        launch_gui()
+        sys.exit(0)
+
     result = count_barnacles(args.image, args)
 
     print("\n── Barnacle Count Report ──────────────────")

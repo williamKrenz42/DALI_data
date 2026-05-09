@@ -132,27 +132,35 @@ def warp_roi(img: np.ndarray, src_corners: np.ndarray) -> np.ndarray:
     return cv2.warpPerspective(img, M, (width, height))
  
  
-def main():
-    print(f"Loading image from: {INPUT_PATH}")
-    img = load_image(INPUT_PATH)
- 
+def crop_image(image_path: str, output_path: str | None = None) -> np.ndarray:
+    """Run the full grid-detection crop pipeline and optionally save the ROI."""
+    print(f"Loading image from: {image_path}")
+    img = load_image(image_path)
+
     print("Building green mask...")
     mask = build_green_mask(img)
- 
+
     print("Detecting grid lines...")
     lines = detect_lines(mask)
     horizontals, verticals = separate_lines(lines)
     print(f"  Found {len(horizontals)} horizontal, {len(verticals)} vertical segments")
- 
+
     print("Computing bounding box...")
     src_corners = grid_bounds(horizontals, verticals, img.shape)
     print(f"  Corners: {src_corners.tolist()}")
- 
+
     print("Warping ROI...")
     roi = warp_roi(img, src_corners)
- 
-    print(f"Saving output to: {OUTPUT_PATH}")
-    cv2.imwrite(OUTPUT_PATH, roi)
+
+    if output_path:
+        print(f"Saving output to: {output_path}")
+        cv2.imwrite(output_path, roi)
+
+    return roi
+
+
+def main():
+    crop_image(INPUT_PATH, OUTPUT_PATH)
     print("Done.")
  
  
