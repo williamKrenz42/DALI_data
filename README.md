@@ -11,30 +11,6 @@ This project builds a two-stage Python/OpenCV pipeline to automate that count:
 
 ---
 
-## Repository Structure
-
-```
-barnacle-counter/
-├── src/
-│   ├── crop.py              # Stage 1: grid detection → perspective-corrected crop
-│   ├── tuning.py            # Stage 1 parameter sweep (outputs annotated images)
-│   ├── barnacle_counter.py  # Stage 2: barnacle detection and counting
-│   ├── barnacle_tuner.py    # Stage 2 parameter sweep (grid search over Hough params)
-│   ├── ellipse_tuner.py     # Stage 2 parameter sweep focused on ellipse detection
-│   └── contour_tuner.py     # Stage 2 parameter sweep using raw contour detection
-├── media/
-│   ├── img1.png, img2.png   # Raw input images
-│   ├── output.jpg           # crop.py output
-│   ├── final.jpg            # Annotated barnacle detection output
-│   ├── output_tuning/       # Stage 1 tuning annotated images
-│   ├── barnacle_runs/       # Stage 2 Hough tuning annotated images, CSV, and contact sheet
-│   ├── ellipse_runs/        # Stage 2 ellipse tuning annotated images, CSV, and contact sheet
-│   └── contour_runs/        # Stage 2 contour tuning annotated images, CSV, and contact sheet
-└── README.md
-```
-
----
-
 ## Stage 1 — ROI Extraction (`src/crop.py`)
 
 ### Goal
@@ -57,14 +33,6 @@ Detect the teal grid frame in the raw field image, isolate the interior square, 
    - Walk outward from the centroid: the closest spanning horizontal above/below → top/bottom boundary; closest spanning vertical left/right → left/right boundary.
 8. **`warp_roi`** — corrects camera angle via `cv2.getPerspectiveTransform` + `cv2.warpPerspective` and writes the clean crop to `OUTPUT_PATH`.
 
-### Key Design Decisions
-
-| Decision | Rationale |
-|---|---|
-| 45° arctan2 split for H/V classification | Dominant-angle approach was mis-labelling segments; simple threshold is more robust |
-| Centroid + axis-spanning filter | Ensures only lines that genuinely cross the interior are used as borders; excludes outer frame noise |
-| Centroid-outward boundary selection | Finds the *innermost* bounding lines rather than the outermost detected extremes, matching the inner square the scientists want |
-
 ### Tuning Tool — `src/tuning.py`
 
 Sweeps Hough parameters (3 thresholds × 3 min-lengths × 4 max-gaps = 36 combinations) and outputs annotated images with detected lines drawn on, saved to `media/output_tuning/`. Output filenames encode the parameter values (e.g. `thresh080_minLen400_maxGap200.png`) for easy visual comparison.
@@ -76,13 +44,21 @@ Sweeps Hough parameters (3 thresholds × 3 min-lengths × 4 max-gaps = 36 combin
 ### Goal
 Accept the cropped ROI image from Stage 1 and return an estimated barnacle count.
 
-### Pipeline
+### Simple GUI
 
-1. **Preprocessing** — greyscale → bilateral filter (`d=9`, `sigmaColor=75`, `sigmaSpace=75`) → CLAHE (`clipLimit=2.5`, `tileGridSize=(8,8)`).
-2. **Primary detector** — Hough Circle Transform (`cv2.HoughCircles` with `HOUGH_GRADIENT`).
-3. **Optional fallback** — contour-based ellipse fitting via Otsu threshold → morphological close → `cv2.findContours` → `cv2.fitEllipse`. Filters by area and aspect ratio.
-4. **Deduplication** — if ellipses are active, any circle whose centre is within the circle's own radius of an ellipse centre is dropped to avoid double-counting.
-5. **Adjustment constant** — a user-defined multiplier applied to the raw detection count to compensate for systematic under- or over-detection.
+Run the counter without arguments to open a basic upload window:
+
+```bash
+python src/barnacle_counter.py
+```
+
+Choose a raw framed image. The app runs the Stage 1 crop, runs the barnacle detector on the cropped ROI, then displays the estimated count and annotated overlay. It also writes the latest crop to `media/output.jpg` and the latest overlay to `media/final.jpg`.
+
+For scripted runs on an already-cropped image, keep using:
+
+```bash
+python src/barnacle_counter.py --image media/output.jpg --output media/final.jpg
+```
 
 ### Key Parameters
 
@@ -147,27 +123,9 @@ Outputs go to `media/contour_runs/` by default:
 
 ---
 
-## Data
-
-| File | Description |
-|---|---|
-| `media/img1.png`, `media/img2.png` | Raw field images with the teal wire frame visible |
-| `media/output.jpg` | Perspective-corrected crop produced by `crop.py` |
-| `media/final.jpg` | Annotated barnacle detection output from `barnacle_counter.py` |
-| `media/output_tuning/` | Annotated images from the Stage 1 parameter sweep (`tuning.py`) |
-| `media/barnacle_runs/` | Annotated images, `tuning_results.csv`, and `contact_sheet.jpg` from the Stage 2 sweep (`barnacle_tuner.py`) |
-
----
-
 ## Evaluation
 
-No ground-truth annotation masks are currently included in the repository. Recommended metrics once annotations are available:
-
-- **Count accuracy** — `|predicted_count − true_count| / true_count`
-- **Precision / Recall** — match predicted circles to ground-truth contour centroids within a distance threshold
-- **F1 score** — harmonic mean of precision and recall
-
-With only two input images and no labels, evaluation is currently qualitative (visual inspection of annotated outputs). The tuning tools are designed to surface parameter settings worth validating if annotated data becomes available.
+From the images that the model outputs, my model seems relatively accurate in its calculations. However, without a larger sample size of labled barnacle images, it is much harder to make a generalization. Additionally, the adjustment value I apply to each count was very difficult to judge with such a small sample size, given more time and data, I would have loved to arrive at a closer adjustment based purely in statistics.
 
 ---
 
@@ -175,5 +133,12 @@ With only two input images and no labels, evaluation is currently qualitative (v
 
 - Collect more annotated images to improve tuning and evaluation reliability.
 - Explore learned approaches (e.g. fine-tuned instance segmentation) if the Hough-based prototype plateaus.
-- Integrate Stages 1 and 2 into a single end-to-end script with a simple output (count + annotated image).
+- Improve and include ellipse and countour detection models.
 - Consider a lightweight review UI so scientists can quickly confirm or adjust the automated count before recording results.
+
+
+---
+
+## Learning Process
+
+- The main parts of my learning process for this project was learning of, and experimenting with the different ways to use OpenCV to detect the barnacles. I was essentially new to OpenCV coming into this project, so I honeslty spent the majority of my time learning how the different parameters to each detection function interact to actually label the images. The first step was to do background research into each of the methods, circle, line, ellipse, and contour to discover how to actually use them, then I spent some time tuning the different approaches to many different combinations of parameters to see what would work best in these cases. This was very interesting, and I would love to do a longer project with a larger dataset of labled images to really tune in the models.
